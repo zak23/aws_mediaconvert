@@ -396,13 +396,16 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     // Calculate output resolution (scale down if long edge > 1920)
     const outputResolution = calculateOutputResolution(videoMetadata.width, videoMetadata.height, 1920);
 
-    // Calculate output bitrate based on original bitrate and resolution scaling
+    // Calculate output bitrate with 5 Mbps maximum
     const scaleFactor = Math.min(outputResolution.width / videoMetadata.width, outputResolution.height / videoMetadata.height);
-    const outputBitrate = Math.floor(videoMetadata.bitrate * scaleFactor);
+    const scaledBitrate = Math.floor(videoMetadata.bitrate * scaleFactor);
+    const maxBitrate = 5000000; // 5 Mbps in bps
+    const outputBitrate = Math.min(scaledBitrate, maxBitrate);
     
     console.log(`\n📊 Bitrate Settings:`);
     console.log(`  Original: ${(videoMetadata.bitrate / 1000000).toFixed(2)} Mbps`);
-    console.log(`  Output: ${(outputBitrate / 1000000).toFixed(2)} Mbps (scale factor: ${scaleFactor.toFixed(3)})`);
+    console.log(`  Scaled: ${(scaledBitrate / 1000000).toFixed(2)} Mbps (scale factor: ${scaleFactor.toFixed(3)})`);
+    console.log(`  Output: ${(outputBitrate / 1000000).toFixed(2)} Mbps (max: 5 Mbps)`);
 
     // Calculate optimal watermark size and offset based on output resolution
     const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, 10, 80);
