@@ -10,6 +10,8 @@ A simple Node.js script to upload videos to S3 and convert them to MP4 using AWS
 - **Dynamic watermark insertion** - Looping sequential watermark animation
 - **Automatic video metadata detection** - Detects video dimensions and duration
 - **Smart resolution scaling** - Automatically scales down videos where long edge > 1920px while preserving aspect ratio
+- **Automatic download** - Downloads processed videos from S3 to local `outputs/` directory
+- **File size tracking** - Logs initial and completed file sizes with compression ratio
 - Configurable input/output folders
 - Simple CLI interface
 
@@ -83,7 +85,8 @@ The script will:
 1. Upload the video to your S3 bucket in the input folder
 2. Create a MediaConvert job to convert it to MP4
 3. Monitor job progress in real-time with terminal updates
-4. Output the converted video to the output folder in S3
+4. Download the processed video from S3 to the local `outputs/` directory
+5. The processed video will be saved in the `outputs/` folder with a timestamped filename
 
 ## Supported Video Formats
 
@@ -105,14 +108,18 @@ The script will:
 
 The script automatically detects your video dimensions and scales them down if necessary:
 
-- **Long edge ≤ 1920px**: Original resolution preserved
+- **Long edge ≤ 1920px**: Original resolution preserved (with even dimension adjustment if needed)
 - **Long edge > 1920px**: Scaled down to 1920px on the long edge while maintaining aspect ratio
+
+**Important Note:** MediaConvert requires all dimensions to be even numbers. The script automatically adjusts dimensions to be even (rounds down if necessary).
 
 **Examples:**
 - `3840x2160` → `1920x1080` (scaled by 0.5)
 - `2560x1440` → `1920x1080` (scaled by 0.75)
 - `1920x1080` → `1920x1080` (unchanged)
 - `1280x720` → `1280x720` (unchanged)
+- `1921x1081` → `1920x1080` (even dimension adjustment)
+- `1079x1920` → `1078x1920` (even dimension adjustment)
 
 ## Watermark Feature
 
@@ -163,7 +170,26 @@ your-bucket/
 ├── input/
 │   └── your-video.mp4          # Uploaded source file
 └── output/
-    └── your-video_TIMESTAMP.mp4  # Converted output file
+    └── your-video_TIMESTAMP.mp4  # Converted output file (in S3)
+
+Local project:
+├── inputs/                       # Local input videos
+├── outputs/                      # Downloaded processed videos
+└── your-video_TIMESTAMP.mp4    # Downloaded from S3
+```
+
+## Automatic Download Feature
+
+When processing is complete, the script automatically downloads the processed video from S3 to your local `outputs/` directory:
+
+- **Progress tracking**: Shows download progress percentage in real-time
+- **Automatic directory creation**: Creates `outputs/` directory if it doesn't exist
+- **Timestamped filenames**: Prevents overwriting previous outputs
+- **Smart naming**: Preserves original filename with MediaConvert modifiers
+
+**Example:**
+```
+input/video.mp4 → outputs/video_1734567890.mp4
 ```
 
 ## Real-Time Progress Monitoring
@@ -172,6 +198,8 @@ The script now monitors job progress in real-time and displays updates in your t
 
 ```
 === AWS MediaConvert Video Processing ===
+
+📁 Initial file size: 25.30 MB (26,534,912 bytes)
 
 Uploading to S3: input/my-video.mp4
 Upload progress: 100%
@@ -187,10 +215,20 @@ MediaConvert job created: abc123-def456-ghi789
 [10:30:45] 🎬 Job progressing... (30s elapsed)
      Current phase: Transcoding
 [10:31:15] ✅ Job completed successfully! (60s total)
-     Output file: s3://your-bucket/output/
+     Output file: s3://your-bucket/output/my-video_1734567890.mp4
 
 === Processing Complete ===
-S3 Output Location: s3://your-bucket/output/
+S3 Output Location: s3://your-bucket/output/my-video_1734567890.mp4
+
+📥 Downloading my-video_1734567890.mp4 from S3...
+Download progress: 100%
+
+✅ Download complete: outputs/my-video_1734567890.mp4
+
+📁 Completed file size: 18.50 MB (19,398,656 bytes)
+📊 Compression ratio: 26.9% smaller
+
+🎉 All done! Processed video saved locally.
 ```
 
 ### Status Updates
@@ -251,12 +289,14 @@ The script includes comprehensive error handling:
 ```
 .
 ├── config.js           # Configuration loader
-├── upload.js           # S3 upload module
+├── upload.js           # S3 upload/download module
 ├── mediaconvert.js     # MediaConvert job module
 ├── index.js            # Main script
 ├── package.json        # Node.js dependencies
 ├── .env               # Environment variables (not in git)
 ├── .env.example       # Example environment file
+├── inputs/            # Local input videos
+├── outputs/           # Downloaded processed videos
 └── README.md          # This file
 ```
 

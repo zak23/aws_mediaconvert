@@ -128,6 +128,16 @@ function calculateWatermarkOffset(videoWidth, videoHeight) {
 }
 
 /**
+ * Ensure dimensions are even numbers (MediaConvert requirement)
+ * @param {number} dimension - Dimension to make even
+ * @returns {number} Even dimension
+ */
+function ensureEven(dimension) {
+  // Round down to nearest even number
+  return Math.floor(dimension / 2) * 2;
+}
+
+/**
  * Calculate output resolution, scaling down if long edge exceeds maxLongEdge
  * @param {number} width - Original video width in pixels
  * @param {number} height - Original video height in pixels
@@ -137,9 +147,16 @@ function calculateWatermarkOffset(videoWidth, videoHeight) {
 function calculateOutputResolution(width, height, maxLongEdge = 1920) {
   const longEdge = Math.max(width, height);
   
-  // If long edge is already <= maxLongEdge, return original dimensions
+  // If long edge is already <= maxLongEdge, ensure dimensions are even and return
   if (longEdge <= maxLongEdge) {
-    return { width, height };
+    const evenWidth = ensureEven(width);
+    const evenHeight = ensureEven(height);
+    
+    if (evenWidth !== width || evenHeight !== height) {
+      console.log(`📐 Even dimension adjustment: ${width}x${height} → ${evenWidth}x${evenHeight}`);
+    }
+    
+    return { width: evenWidth, height: evenHeight };
   }
   
   // Calculate scaling factor
@@ -149,11 +166,15 @@ function calculateOutputResolution(width, height, maxLongEdge = 1920) {
   const newWidth = Math.round(width * scaleFactor);
   const newHeight = Math.round(height * scaleFactor);
   
-  console.log(`📐 Resolution scaling: ${width}x${height} → ${newWidth}x${newHeight} (scale factor: ${scaleFactor.toFixed(3)})`);
+  // Ensure both dimensions are even numbers (MediaConvert requirement)
+  const evenWidth = ensureEven(newWidth);
+  const evenHeight = ensureEven(newHeight);
+  
+  console.log(`📐 Resolution scaling: ${width}x${height} → ${evenWidth}x${evenHeight} (scale factor: ${scaleFactor.toFixed(3)})`);
   
   return { 
-    width: newWidth, 
-    height: newHeight 
+    width: evenWidth, 
+    height: evenHeight 
   };
 }
 
@@ -377,10 +398,40 @@ export async function monitorJobProgress(jobId) {
             break;
           case JobStatus.COMPLETE:
             console.log(`[${timestamp}] ✅ Job completed successfully! (${elapsedSeconds}s total)`);
-            if (job.Settings && job.Settings.OutputGroups) {
-              const outputs = job.Settings.OutputGroups.flatMap(og => og.Outputs || []);
-              console.log(`     Output file: ${job.Settings.OutputGroups[0].OutputGroupSettings.FileGroupSettings.Destination}`);
+            
+            // Extract output file URI from completed job
+            try {
+              if (job.Settings && job.Settings.OutputGroups && job.Settings.OutputGroups.length > 0) {
+                const outputGroup = job.Settings.OutputGroups[0];
+                const destination = outputGroup.OutputGroupSettings?.FileGroupSettings?.Destination;
+                
+                if (destination && job.Inputs && job.Inputs.length > 0) {
+                  const fileName = path.basename(job.Inputs[0].FileInput);
+                  const baseName = path.basename(fileName, path.extname(fileName));
+                  const extension = path.extname(fileName);
+                  
+                  // Try to get nameModifier from output settings
+                  let nameModifier = '';
+                  if (outputGroup.Outputs && outputGroup.Outputs.length > 0 && outputGroup.Outputs[0].NameModifier) {
+                    nameModifier = outputGroup.Outputs[0].NameModifier;
+                  } else if (outputGroup.Outputs && outputGroup.Outputs[0].NameModifier === undefined) {
+                    nameModifier = '_' + Date.now();
+                  }
+                  
+                  // Remove trailing slash from destination
+                  const cleanDestination = destination.endsWith('/') ? destination.slice(0, -1) : destination;
+                  const outputUri = `${cleanDestination}/${baseName}${nameModifier}${extension}`;
+                  
+                  console.log(`     Output file: ${outputUri}`);
+                } else {
+                  console.log(`     Output location: s3://${config.s3.bucket}/${config.s3.outputFolder}/`);
+                }
+              }
+            } catch (error) {
+              // Silently handle output URI extraction errors - job is still complete
+              console.log(`     Output location: s3://${config.s3.bucket}/${config.s3.outputFolder}/`);
             }
+            
             return job;
           case JobStatus.CANCELED:
             console.log(`[${timestamp}] ❌ Job was canceled`);
@@ -399,22 +450,29 @@ export async function monitorJobProgress(jobId) {
         }
         previousStatus = status;
       }
-      // Show periodic progress updates every 20 seconds (or when % complete changes)
-      else if (status === JobStatus.PROGRESSING && (elapsedSeconds - lastProgressUpdate) >= 20) {
-        let progressInfo = `[${timestamp}] 🎬 Still processing... (${elapsedSeconds}s elapsed)`;
+      // Show progress updates for PROGRESSING status
+      else if (status === JobStatus.PROGRESSING) {
+        // Show updates every 10 seconds or when percent complete changes
+        const shouldShowUpdate = 
+          (elapsedSeconds - lastProgressUpdate) >= 10 ||
+          job.JobPercentComplete !== undefined;
         
-        // Show current phase if available
-        if (job.CurrentPhase) {
-          progressInfo += `\n     Current phase: ${job.CurrentPhase}`;
+        if (shouldShowUpdate) {
+          let progressInfo = `[${timestamp}] 🎬 Processing... (${elapsedSeconds}s elapsed)`;
+          
+          // Show current phase if available
+          if (job.CurrentPhase) {
+            progressInfo += `\n     Phase: ${job.CurrentPhase}`;
+          }
+          
+          // Show percent complete if available
+          if (job.JobPercentComplete !== undefined) {
+            progressInfo += ` - ${job.JobPercentComplete}% complete`;
+          }
+          
+          console.log(progressInfo);
+          lastProgressUpdate = elapsedSeconds;
         }
-        
-        // Show percent complete if available
-        if (job.JobPercentComplete) {
-          progressInfo += `\n     Progress: ${job.JobPercentComplete}% complete`;
-        }
-        
-        console.log(progressInfo);
-        lastProgressUpdate = elapsedSeconds;
       }
       
       // Break the loop if job is in terminal state
@@ -430,6 +488,12 @@ export async function monitorJobProgress(jobId) {
         throw error;
       }
       console.error(`Error monitoring job: ${error.message}`);
+      
+      // Break loop on repeated errors to avoid infinite loop
+      if (previousStatus === JobStatus.COMPLETE) {
+        break;
+      }
+      
       await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
     }
   }
