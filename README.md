@@ -59,6 +59,7 @@ MEDIACONVERT_ENDPOINT=https://mediaconvert.us-east-1.amazonaws.com
 MEDIACONVERT_ROLE_ARN=arn:aws:iam::ACCOUNT_ID:role/service-role/MediaConvert_Default_Role
 MEDIACONVERT_QUEUE_ARN=arn:aws:mediaconvert:us-east-1:ACCOUNT_ID:queues/Default
 MEDIACONVERT_POLL_INTERVAL_MS=5000  # Optional: Progress check interval in ms (default: 5000)
+WATERMARK_OPACITY=80  # Optional: Watermark opacity 0-100 (default: 80)
 ```
 
 ### 3. Set Up IAM Role for MediaConvert
@@ -235,7 +236,9 @@ The watermark size and position are **automatically calculated** based on your v
 
 ```javascript
 // Automatic size calculation (in mediaconvert.js)
-calculateWatermarkSize(videoWidth, videoHeight, percentSize = 8, minSize = 60)
+// For larger files (long edge > 1920px): 18% of smaller dimension
+// For normal files (long edge ≤ 1920px): 12% of smaller dimension
+calculateWatermarkSize(videoWidth, videoHeight, percentSize, minSize = 80)
 calculateWatermarkOffset(videoWidth, videoHeight)
 
 // Configuration options
@@ -243,18 +246,18 @@ calculateWatermarkOffset(videoWidth, videoHeight)
   videoWidth: videoMetadata.width,      // Auto-detected
   videoHeight: videoMetadata.height,    // Auto-detected  
   videoDurationMs: videoMetadata.durationMs, // Auto-detected
-  watermarkSize: calculatedSize,         // 8% of smaller dimension, min 60px
-  offset: calculatedOffset,             // 3-5% of smaller dimension, min 30px
-  durationMs: 2000,                     // Duration per corner (2 seconds)
-  opacity: 80,                          // Opacity (0-100)
+  watermarkSize: calculatedSize,         // 12-18% of smaller dimension, min 80px
+  offset: calculatedOffset,             // 3-5% of smaller dimension, min 20px
+  durationMs: 5000,                     // Duration per corner (5 seconds)
+  opacity: config.mediaconvert.watermarkOpacity,  // Configurable via .env (default: 80)
   watermarkUri: `s3://bucket/assets/watermark.png`
 }
 ```
 
 **Size Examples:**
-- 1920x1080 video → 86px watermark (8% of 1080, min 60px)
-- 3840x2160 video → 173px watermark (8% of 2160)
-- 720x480 video → 60px watermark (8% = 38px, but minimum 60px applied)
+- 1920x1080 video → 130px watermark (12% of 1080)
+- 3840x2160 video → 389px watermark (18% of 2160, larger file)
+- 720x480 video → 80px watermark (12% = 58px, but minimum 80px applied)
 
 ### Watermark Asset
 
@@ -269,6 +272,18 @@ Place your watermark image at `s3://your-bucket/assets/watermark.png`
 ```bash
 aws s3 cp watermark.png s3://your-bucket/assets/watermark.png
 ```
+
+### Watermark Opacity Configuration
+
+The watermark opacity can be configured via environment variable:
+
+```env
+# Opacity level (0-100, default: 80)
+# 100 = fully opaque, 0 = fully transparent
+WATERMARK_OPACITY=80
+```
+
+Add this to your `.env` file and restart the application to apply changes.
 
 ### Watermark Troubleshooting
 
@@ -334,15 +349,16 @@ Duration: "00:00:02:00"  // Timecode string
 
 **Problem**: Watermark size doesn't match video
 
-**Cause**: Automatic sizing based on video dimensions
+**Cause**: Automatic sizing based on video dimensions (larger files get bigger watermarks)
 
-**Solution**: Adjust percentage in `calculateWatermarkSize()`:
+**Solution**: The system automatically adjusts watermark size:
 ```javascript
-// Current: 10% of smaller dimension, min 80px
-calculateWatermarkSize(videoWidth, videoHeight, 10, 80)
+// For large files (long edge > 1920px): 18% of smaller dimension
+// For normal files (long edge ≤ 1920px): 12% of smaller dimension
+// Minimum size: 80px always enforced
 
-// Larger watermark: 15% of smaller dimension, min 100px
-calculateWatermarkSize(videoWidth, videoHeight, 15, 100)
+// To customize, edit the watermarkPercent calculation in mediaconvert.js:
+const watermarkPercent = longEdge > 1920 ? 18 : 12; // Change percentages here
 ```
 
 #### Watermark Cut Off or Off-Screen

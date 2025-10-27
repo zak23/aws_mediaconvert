@@ -317,11 +317,11 @@ return Math.floor(finalSize)
 ```
 
 **Dynamic Sizing**: 
-- For larger files (long edge > 1920px): 15% of smaller dimension
-- For normal files (long edge ≤ 1920px): 10% of smaller dimension
+- For larger files (long edge > 1920px): 18% of smaller dimension
+- For normal files (long edge ≤ 1920px): 12% of smaller dimension
 - Minimum: 80px always enforced
 
-**Default**: 10% or 15% of smaller dimension (based on video size), minimum 80px
+**Default**: 12% or 18% of smaller dimension (based on video size), minimum 80px
 
 #### `calculateWatermarkOffset(width, height): number`
 - Calculates offset from edges
@@ -675,7 +675,7 @@ s3://your-bucket/
 ```javascript
 // Dynamic sizing based on video size
 const longEdge = Math.max(videoMetadata.width, videoMetadata.height);
-const watermarkPercent = longEdge > 1920 ? 15 : 10; // 15% for large files, 10% for normal
+const watermarkPercent = longEdge > 1920 ? 18 : 12; // 18% for large files, 12% for normal
 
 const smallerDimension = Math.min(width, height);
 const watermarkSize = Math.max(
@@ -1215,7 +1215,7 @@ class MediaConvertService
 
         // Dynamic watermark sizing based on video dimensions
         $longEdge = max($metadata['width'], $metadata['height']);
-        $watermarkPercent = $longEdge > 1920 ? 15 : 10; // 15% for large files, 10% for normal
+        $watermarkPercent = $longEdge > 1920 ? 18 : 12; // 18% for large files, 12% for normal
         
         $watermarkSize = $this->watermark->calculateSize(
             $outputResolution['width'],

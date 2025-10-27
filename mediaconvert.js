@@ -215,14 +215,14 @@ function generateStaticWatermarks({
  * 
  * @param {number} videoWidth - Video width in pixels
  * @param {number} videoHeight - Video height in pixels
- * @param {number} percentSize - Percentage of smaller dimension (default: 10%, 15% for large files)
+ * @param {number} percentSize - Percentage of smaller dimension (default: 12%, 18% for large files)
  * @param {number} minSize - Minimum watermark size in pixels (default: 80)
  * @returns {number} Calculated watermark size (rounded down to integer)
  * 
  * Examples:
- * - 1920×1080 → uses 1080px → 10% = 108px → returns 108px
- * - 3840×2160 → uses 2160px → 15% = 324px → returns 324px (large file, bigger watermark)
- * - 720×480 → uses 480px → 10% = 48px → min 80px → returns 80px
+ * - 1920×1080 → uses 1080px → 12% = 130px → returns 130px
+ * - 3840×2160 → uses 2160px → 18% = 389px → returns 389px (large file, bigger watermark)
+ * - 720×480 → uses 480px → 12% = 58px → min 80px → returns 80px
  */
 function calculateWatermarkSize(videoWidth, videoHeight, percentSize = 10, minSize = 80) {
   // Use the smaller dimension to ensure watermark fits both orientations
@@ -491,9 +491,9 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     // Calculate optimal watermark size and offset based on OUTPUT resolution
     // MediaConvert applies rotation FIRST, then inserts watermarks on rotated video
     
-    // For larger video files (long edge > 1920px), use bigger watermark (15% vs 10%)
+    // For larger video files (long edge > 1920px), use bigger watermark (18% vs 12%)
     const longEdge = Math.max(videoMetadata.width, videoMetadata.height);
-    const watermarkPercent = longEdge > 1920 ? 15 : 10;
+    const watermarkPercent = longEdge > 1920 ? 18 : 12;
     const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, watermarkPercent, 80);
     const watermarkOffset = calculateWatermarkOffset(outputResolution.width, outputResolution.height);
 
@@ -501,11 +501,11 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     // yuvj420p = full range yuv420p (full-range/0-255), known to cause MediaConvert issues
     // yuv420p10le = 10-bit yuv420p, requires special handling
     // yuv420p = standard limited-range yuv420p (16-235), generally works but some variants may fail
-    const problematicColorSpaces = ['yuv420p10le', 'yuvj420p', 'yuv420p'];
+    const problematicColorSpaces = ['yuv420p10le', 'yuvj420p'];
     const needsStaticWatermark = problematicColorSpaces.includes(videoMetadata.colorSpace);
     
     // For yuv420p variants, use more flexible color space handling to avoid preprocessor failures
-    const needsFlexibleColorSpace = ['yuv420p', 'yuvj420p', 'yuv420p10le'].includes(videoMetadata.colorSpace);
+    const needsFlexibleColorSpace = ['yuvj420p', 'yuv420p10le'].includes(videoMetadata.colorSpace);
     
     console.log(`\n💧 Watermark Configuration:`);
     console.log(`  Strategy: ${needsStaticWatermark ? 'Static (color space compatibility)' : 'Animated looping'}`);
