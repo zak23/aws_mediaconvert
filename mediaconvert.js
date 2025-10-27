@@ -1,9 +1,38 @@
+/**
+ * MediaConvert Module - Video Processing and Job Management
+ * 
+ * This module handles all AWS MediaConvert operations including:
+ * - Creating MediaConvert jobs with intelligent video settings
+ * - Monitoring job progress in real-time
+ * - Extracting video metadata using FFprobe
+ * - Generating watermark sequences with animation
+ * - Calculating optimal resolution and bitrate settings
+ * 
+ * Key Features:
+ * - Automatic resolution scaling (max 1920px long edge)
+ * - Even dimension enforcement (MediaConvert requirement)
+ * - Dynamic watermark animation (looping sequence)
+ * - Smart bitrate calculation based on resolution scaling
+ * - Real-time progress monitoring with status updates
+ * 
+ * Dependencies:
+ * - @aws-sdk/client-mediaconvert: MediaConvert API client
+ * - fluent-ffmpeg: Video metadata via FFprobe
+ * - path: Path utilities
+ */
+
 import { MediaConvertClient, CreateJobCommand, GetJobCommand, JobStatus } from '@aws-sdk/client-mediaconvert';
 import { config } from './config.js';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import { execSync } from 'child_process';
 
+/**
+ * MediaConvert Client Instance
+ * 
+ * Initialized with AWS credentials, region, and custom endpoint.
+ * Used for all MediaConvert operations (create job, get status).
+ */
 const mediaConvertClient = new MediaConvertClient({
   region: config.aws.region,
   credentials: {
@@ -15,9 +44,15 @@ const mediaConvertClient = new MediaConvertClient({
 
 /**
  * Convert seconds to MediaConvert timecode format (HH:MM:SS:FF)
- * @param {number} totalSeconds - Total seconds
- * @param {number} frames - Frame number
- * @returns {string} Timecode string
+ * 
+ * MediaConvert uses a specific timecode format for watermark timing.
+ * Format: Hours:Minutes:Seconds:Frames
+ * 
+ * @param {number} totalSeconds - Total seconds (can include fractional seconds)
+ * @param {number} frames - Frame number (default: 0)
+ * @returns {string} Timecode string in format HH:MM:SS:FF
+ * 
+ * Example: 125.5 seconds → "00:02:05:00"
  */
 function secondsToTimecode(totalSeconds, frames = 0) {
   const hours = Math.floor(totalSeconds / 3600);
@@ -29,17 +64,32 @@ function secondsToTimecode(totalSeconds, frames = 0) {
 
 /**
  * Generate looping watermark sequence for entire video duration
- * Creates watermarks that alternate between top-left and bottom-right corners
+ * 
+ * This function creates an animated watermark sequence that loops throughout the video.
+ * The watermark alternates between top-left and bottom-right corners, creating a
+ * continuous loop effect.
+ * 
+ * How it works:
+ * 1. Define corner positions (top-left and bottom-right)
+ * 2. Calculate how many complete sequences are needed for the video duration
+ * 3. Generate watermark objects for each corner in each sequence
+ * 4. Adjust duration for the final watermark if it extends beyond video end
+ * 
  * @param {Object} options - Watermark configuration options
  * @param {number} options.videoWidth - Video width in pixels
  * @param {number} options.videoHeight - Video height in pixels
  * @param {number} options.videoDurationMs - Video duration in milliseconds
- * @param {number} options.watermarkSize - Watermark size in pixels (width and height)
+ * @param {number} options.watermarkSize - Watermark size in pixels (square, width and height)
  * @param {number} options.offset - Offset from edges in pixels
  * @param {number} options.durationMs - Duration for each watermark in milliseconds
- * @param {number} options.opacity - Opacity (0-100)
- * @param {string} options.watermarkUri - S3 URI of the watermark image
- * @returns {Array} Array of watermark insertable images
+ * @param {number} options.opacity - Opacity (0-100, where 100 is fully opaque)
+ * @param {string} options.watermarkUri - S3 URI of the watermark image (e.g., 's3://bucket/assets/logo.png')
+ * @returns {Array} Array of watermark objects ready for MediaConvert InsertableImages
+ * 
+ * Example for 30-second video:
+ * - Sequence duration: 2s per corner × 2 corners = 4s
+ * - Number of sequences: ceil(30000ms / 4000ms) = 8 sequences
+ * - Total watermarks: 8 sequences × 2 corners = 16 watermarks
  */
 function generateWatermarkSequence({
   videoWidth = 1920,
@@ -51,18 +101,22 @@ function generateWatermarkSequence({
   opacity = 80,
   watermarkUri = `s3://${config.s3.bucket}/assets/watermark.png`,
 }) {
+  // Define corner positions where watermarks will appear
+  // Top-left: near top-left corner
+  // Bottom-right: near bottom-right corner
   const corners = [
     { name: 'top-left', x: offset, y: offset },
     { name: 'bottom-right', x: videoWidth - watermarkSize - offset, y: videoHeight - watermarkSize - offset },
   ];
 
+  // Calculate timing information
   const sequenceDurationMs = durationMs * corners.length; // Total time for one complete sequence
-  const numberOfSequences = Math.ceil(videoDurationMs / sequenceDurationMs);
-  const watermarks = [];
+  const numberOfSequences = Math.ceil(videoDurationMs / sequenceDurationMs); // How many sequences needed
+  const watermarks = []; // Array to hold all watermark objects
   
-  let layerIndex = 0;
+  let layerIndex = 0; // Track layer number for each watermark (MediaConvert requirement)
   
-  // Generate multiple sequences to cover the entire video
+  // Generate multiple sequences to cover the entire video duration
   for (let sequenceIndex = 0; sequenceIndex < numberOfSequences; sequenceIndex++) {
     const sequenceStartMs = sequenceIndex * sequenceDurationMs;
     
@@ -97,18 +151,38 @@ function generateWatermarkSequence({
 
 /**
  * Calculate optimal watermark size based on video dimensions
+ * 
+ * This function determines the appropriate watermark size based on video dimensions.
+ * It uses the smaller dimension (width or height) to ensure the watermark fits
+ * properly in both landscape and portrait orientations.
+ * 
+ * Formula: Smaller dimension × percentage, with a minimum size enforced.
+ * 
+ * Why use smaller dimension?
+ * - Landscape videos: smaller dimension = height, watermark fits vertically
+ * - Portrait videos: smaller dimension = width, watermark fits horizontally
+ * - Ensures watermark is always visible and proportional
+ * 
  * @param {number} videoWidth - Video width in pixels
  * @param {number} videoHeight - Video height in pixels
- * @param {number} percentSize - Percentage of video height (default: 8%)
- * @param {number} minSize - Minimum watermark size in pixels (default: 60)
- * @returns {number} Calculated watermark size
+ * @param {number} percentSize - Percentage of smaller dimension (default: 10%)
+ * @param {number} minSize - Minimum watermark size in pixels (default: 80)
+ * @returns {number} Calculated watermark size (rounded down to integer)
+ * 
+ * Examples:
+ * - 1920×1080 → uses 1080px → 10% = 108px → returns 108px
+ * - 3840×2160 → uses 2160px → 10% = 216px → returns 216px
+ * - 720×480 → uses 480px → 10% = 48px → min 80px → returns 80px
  */
 function calculateWatermarkSize(videoWidth, videoHeight, percentSize = 10, minSize = 80) {
   // Use the smaller dimension to ensure watermark fits both orientations
   const smallerDimension = Math.min(videoWidth, videoHeight);
+  // Calculate size as percentage of smaller dimension
   const calculatedSize = (smallerDimension * percentSize) / 100;
+  // Apply minimum size requirement
   const finalSize = Math.max(calculatedSize, minSize);
   
+  // Round down to integer (pixels must be whole numbers)
   return Math.floor(finalSize);
 }
 
@@ -128,29 +202,70 @@ function calculateWatermarkOffset(videoWidth, videoHeight) {
 
 /**
  * Ensure dimensions are even numbers (MediaConvert requirement)
- * @param {number} dimension - Dimension to make even
- * @returns {number} Even dimension
+ * 
+ * AWS MediaConvert requires all video dimensions (width and height) to be even numbers.
+ * This function rounds a dimension down to the nearest even number.
+ * 
+ * Why even numbers?
+ * - H.264 encoding standards require even dimensions for certain optimizations
+ * - Prevents encoding errors and quality issues
+ * - Ensures compatibility across all devices
+ * 
+ * Formula: Round down to nearest even (e.g., 1921 → 1920, 1081 → 1080)
+ * 
+ * @param {number} dimension - Dimension to make even (width or height)
+ * @returns {number} Even dimension (always ≤ original dimension)
+ * 
+ * Examples:
+ * - 1921 → 1920
+ * - 1080 → 1080 (already even)
+ * - 99 → 98
+ * - 100 → 100 (already even)
  */
 function ensureEven(dimension) {
   // Round down to nearest even number
+  // Example: 1921 / 2 = 960.5, floor = 960, * 2 = 1920
   return Math.floor(dimension / 2) * 2;
 }
 
 /**
- * Calculate output resolution, scaling down if long edge exceeds maxLongEdge
+ * Calculate output resolution with automatic scaling
+ * 
+ * This function determines the output video dimensions, scaling down if necessary.
+ * It ensures the long edge (max of width/height) doesn't exceed maxLongEdge (1920px).
+ * All dimensions are guaranteed to be even numbers (MediaConvert requirement).
+ * 
+ * Scaling logic:
+ * 1. If long edge ≤ 1920px: Keep original dimensions (with even adjustment)
+ * 2. If long edge > 1920px: Scale proportionally to fit within 1920px
+ * 3. Always ensure both width and height are even numbers
+ * 
+ * Why 1920px limit?
+ * - 1920×1080 is standard HD resolution
+ * - Reduces file size and processing time
+ * - Maintains good quality for web streaming
+ * - Most devices display well at this resolution
+ * 
  * @param {number} width - Original video width in pixels
  * @param {number} height - Original video height in pixels
  * @param {number} maxLongEdge - Maximum allowed long edge dimension (default: 1920)
- * @returns {Object} Output dimensions {width, height}
+ * @returns {Object} Output dimensions {width, height} (both even numbers)
+ * 
+ * Examples:
+ * - 3840×2160 → 1920×1080 (scale factor: 0.5)
+ * - 2560×1440 → 1920×1080 (scale factor: 0.75)
+ * - 1920×1080 → 1920×1080 (no scaling, already optimal)
+ * - 1280×720 → 1280×720 (no scaling, already below limit)
  */
 function calculateOutputResolution(width, height, maxLongEdge = 1920) {
   const longEdge = Math.max(width, height);
   
-  // If long edge is already <= maxLongEdge, ensure dimensions are even and return
+  // Case 1: Resolution is already within limits, just ensure even dimensions
   if (longEdge <= maxLongEdge) {
     const evenWidth = ensureEven(width);
     const evenHeight = ensureEven(height);
     
+    // Log if dimensions were adjusted to be even
     if (evenWidth !== width || evenHeight !== height) {
       console.log(`📐 Even dimension adjustment: ${width}x${height} → ${evenWidth}x${evenHeight}`);
     }
@@ -158,10 +273,11 @@ function calculateOutputResolution(width, height, maxLongEdge = 1920) {
     return { width: evenWidth, height: evenHeight };
   }
   
-  // Calculate scaling factor
+  // Case 2: Resolution exceeds limit, need to scale down
+  // Calculate scale factor to bring long edge down to maxLongEdge
   const scaleFactor = maxLongEdge / longEdge;
   
-  // Scale both dimensions proportionally
+  // Scale both dimensions proportionally (maintains aspect ratio)
   const newWidth = Math.round(width * scaleFactor);
   const newHeight = Math.round(height * scaleFactor);
   
@@ -169,6 +285,7 @@ function calculateOutputResolution(width, height, maxLongEdge = 1920) {
   const evenWidth = ensureEven(newWidth);
   const evenHeight = ensureEven(newHeight);
   
+  // Log the scaling operation
   console.log(`📐 Resolution scaling: ${width}x${height} → ${evenWidth}x${evenHeight} (scale factor: ${scaleFactor.toFixed(3)})`);
   
   return { 
