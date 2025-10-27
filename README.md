@@ -69,6 +69,87 @@ MediaConvert requires an IAM role with S3 access. Create a role with the followi
 
 The role ARN should be added to `MEDIACONVERT_ROLE_ARN` in your `.env` file.
 
+#### Required IAM Permissions
+
+Your AWS user/role needs the following IAM permissions to run this script:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "S3BucketFullAccess",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:GetObject",
+                "s3:DeleteObject",
+                "s3:ListBucket",
+                "s3:GetObjectAttributes",
+                "s3:PutObjectAcl",
+                "s3:GetObjectVersion",
+                "s3:DeleteObjectVersion"
+            ],
+            "Resource": [
+                "arn:aws:s3:::your-bucket-name",
+                "arn:aws:s3:::your-bucket-name/*"
+            ]
+        },
+        {
+            "Sid": "ElasticTranscoderJobManagement",
+            "Effect": "Allow",
+            "Action": [
+                "elastictranscoder:CreateJob",
+                "elastictranscoder:ReadJob",
+                "elastictranscoder:ReadPreset",
+                "elastictranscoder:ReadPipeline",
+                "elastictranscoder:ListJobsByPipeline",
+                "elastictranscoder:ListJobsByStatus"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "MediaConvertJobManagement",
+            "Effect": "Allow",
+            "Action": [
+                "mediaconvert:CreateJob",
+                "mediaconvert:GetJob",
+                "mediaconvert:ListJobs",
+                "mediaconvert:CancelJob",
+                "mediaconvert:ListJobTemplates",
+                "mediaconvert:GetJobTemplate",
+                "mediaconvert:DescribeEndpoints"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "SNSTopicPublish",
+            "Effect": "Allow",
+            "Action": [
+                "sns:Publish",
+                "sns:GetTopicAttributes",
+                "sns:ListTopics",
+                "sns:Subscribe",
+                "sns:Unsubscribe"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "IAMPassRoleForMediaConvert",
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": "arn:aws:iam::ACCOUNT_ID:role/service-role/MediaConvert_Default_Role"
+        }
+    ]
+}
+```
+
+**Important Notes:**
+- Replace `your-bucket-name` with your actual S3 bucket name
+- Replace `ACCOUNT_ID` with your AWS account ID
+- Replace `MediaConvert_Default_Role` with the actual MediaConvert role name you create
+- You can attach this policy directly to your IAM user/role in the AWS Console
+
 ## Usage
 
 Run the script with a video file path:
