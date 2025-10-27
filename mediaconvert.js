@@ -29,6 +29,7 @@ function secondsToTimecode(totalSeconds, frames = 0) {
 
 /**
  * Generate looping watermark sequence for entire video duration
+ * Creates watermarks that alternate between top-left and bottom-right corners
  * @param {Object} options - Watermark configuration options
  * @param {number} options.videoWidth - Video width in pixels
  * @param {number} options.videoHeight - Video height in pixels
@@ -52,8 +53,6 @@ function generateWatermarkSequence({
 }) {
   const corners = [
     { name: 'top-left', x: offset, y: offset },
-    { name: 'top-right', x: videoWidth - watermarkSize - offset, y: offset },
-    { name: 'bottom-left', x: offset, y: videoHeight - watermarkSize - offset },
     { name: 'bottom-right', x: videoWidth - watermarkSize - offset, y: videoHeight - watermarkSize - offset },
   ];
 
@@ -264,7 +263,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     console.log(`  Size: ${watermarkSize}x${watermarkSize}px`);
     console.log(`  Offset: ${watermarkOffset}px from edges`);
     console.log(`  Opacity: 80%`);
-    console.log(`  Animation: Looping corner sequence (2s per corner)`);
+    console.log(`  Animation: Looping sequence (top-left & bottom-right, 2s per corner)`);
     console.log(`\n📐 Output Resolution: ${outputResolution.width}x${outputResolution.height}\n`);
 
     const jobSettings = {
