@@ -477,7 +477,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     // So we use the post-rotation dimensions for both output and watermark calculations
     const outputResolution = calculateOutputResolution(videoMetadata.width, videoMetadata.height, 1920);
 
-    // Calculate output bitrate with 5 Mbps maximum
+    // Calculate output bitrate with 10 Mbps maximum
     const scaleFactor = Math.min(outputResolution.width / videoMetadata.width, outputResolution.height / videoMetadata.height);
     const scaledBitrate = Math.floor(videoMetadata.bitrate * scaleFactor);
     const maxBitrate = 10000000; // 10 Mbps in bps

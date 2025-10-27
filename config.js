@@ -54,7 +54,7 @@ export const config = {
     // Polling Interval - How often to check job status (default: 5000ms)
     // Lower values = more frequent updates but more API calls
     pollIntervalMs: parseInt(process.env.MEDIACONVERT_POLL_INTERVAL_MS) || 5000,
-    // Watermark Opacity - Opacity level for watermarks (0-100, default: 80)
+    // Watermark Opacity - Opacity level for watermarks (0-100, default: 50)
     // 100 = fully opaque, 0 = fully transparent
     watermarkOpacity: parseInt(process.env.WATERMARK_OPACITY) || 50,
   },

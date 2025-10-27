@@ -185,7 +185,7 @@ The script will:
 ## Output Format
 
 - Container: MP4
-- Video Codec: H.264 (max 5 Mbps, high quality)
+- Video Codec: H.264 (max 10 Mbps, high quality)
 - Audio Codec: AAC (128 kbps, 48 kHz)
 - **Resolution**: Automatically scales down videos where the long edge exceeds 1920 pixels while preserving aspect ratio
 
@@ -249,7 +249,7 @@ calculateWatermarkOffset(videoWidth, videoHeight)
   watermarkSize: calculatedSize,         // 12-18% of smaller dimension, min 80px
   offset: calculatedOffset,             // 3-5% of smaller dimension, min 20px
   durationMs: 5000,                     // Duration per corner (5 seconds)
-  opacity: config.mediaconvert.watermarkOpacity,  // Configurable via .env (default: 80)
+  opacity: config.mediaconvert.watermarkOpacity,  // Configurable via .env (default: 50)
   watermarkUri: `s3://bucket/assets/watermark.png`
 }
 ```
@@ -278,9 +278,9 @@ aws s3 cp watermark.png s3://your-bucket/assets/watermark.png
 The watermark opacity can be configured via environment variable:
 
 ```env
-# Opacity level (0-100, default: 80)
+# Opacity level (0-100, default: 50)
 # 100 = fully opaque, 0 = fully transparent
-WATERMARK_OPACITY=80
+WATERMARK_OPACITY=50
 ```
 
 Add this to your `.env` file and restart the application to apply changes.
@@ -322,7 +322,7 @@ Add this to your `.env` file and restart the application to apply changes.
 4. **Image Quality**
    - Use high-resolution watermark (512x512px minimum)
    - Ensure PNG has transparent background
-   - Check opacity setting (default: 80%)
+   - Check opacity setting (default: 50%)
 
 5. **Verify Video Duration**
    - Watermarks need at least 2 seconds to show

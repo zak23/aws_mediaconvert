@@ -379,7 +379,7 @@ return Math.floor(finalSize)
 1. Determine output S3 key and URI
 2. Get video metadata (dimensions, duration, bitrate)
 3. Calculate output resolution
-4. Calculate output bitrate (scaled by resolution factor, capped at 5 Mbps)
+4. Calculate output bitrate (scaled by resolution factor, capped at 10 Mbps)
 5. Calculate watermark size and offset
 6. Generate watermark sequence
 7. Build job settings object
@@ -432,7 +432,7 @@ return Math.floor(finalSize)
 ```
 
 **H.264 Settings**:
-- `MaxBitrate`: Scaled from source bitrate, capped at 5 Mbps
+- `MaxBitrate`: Scaled from source bitrate, capped at 10 Mbps
 - `RateControlMode`: QVBR (Quality Variable Bitrate)
 - `QualityTuningLevel`: SINGLE_PASS_HQ
 - `SceneChangeDetect`: TRANSITION_DETECTION
@@ -615,7 +615,7 @@ s3://your-bucket/
 - Video Codec: H.264 (AVC)
 - Audio Codec: AAC
 - Resolution: Up to 1920px long edge (scaled if needed)
-- Bitrate: Scaled from source, capped at 5 Mbps
+- Bitrate: Scaled from source, capped at 10 Mbps
 - Frame Rate: Preserved from source
 - Audio: 128 kbps, 48 kHz, stereo
 
@@ -623,7 +623,7 @@ s3://your-bucket/
 
 ```javascript
 {
-  MaxBitrate: calculatedBitrate,      // Scaled from source, capped at 5 Mbps
+  MaxBitrate: calculatedBitrate,      // Scaled from source, capped at 10 Mbps
   RateControlMode: 'QVBR',             // Quality Variable Bitrate
   QualityTuningLevel: 'SINGLE_PASS_HQ', // Single-pass high quality
   SceneChangeDetect: 'TRANSITION_DETECTION', // Scene detection
@@ -811,18 +811,18 @@ const newHeight = Math.floor(height * scaleFactor / 2) * 2; // Even
 ```javascript
 const scaleFactor = Math.min(newWidth / originalWidth, newHeight / originalHeight);
 const scaledBitrate = originalBitrate * scaleFactor;
-const maxBitrate = 5000000; // 5 Mbps in bps
+const maxBitrate = 10000000; // 10 Mbps in bps
 const outputBitrate = Math.min(scaledBitrate, maxBitrate);
 ```
 
-The bitrate is first scaled proportionally based on resolution change, then capped at 5 Mbps maximum.
+The bitrate is first scaled proportionally based on resolution change, then capped at 10 Mbps maximum.
 
 **Examples**:
 | Original Resolution | Original Bitrate | Output Resolution | Scaled Bitrate | Output Bitrate | Max Cap Applied |
 |---------------------|------------------|-------------------|----------------|----------------|-----------------|
-| 3840x2160           | 20 Mbps          | 1920x1080        | 5.0 Mbps       | 5.0 Mbps       | ✓              |
-| 2560x1440           | 15 Mbps          | 1920x1080        | 7.5 Mbps       | 5.0 Mbps       | ✓              |
-| 1920x1080           | 10 Mbps          | 1920x1080        | 10.0 Mbps      | 5.0 Mbps       | ✓              |
+| 3840x2160           | 20 Mbps          | 1920x1080        | 5.0 Mbps       | 5.0 Mbps       | No              |
+| 2560x1440           | 15 Mbps          | 1920x1080        | 7.5 Mbps       | 7.5 Mbps       | No              |
+| 1920x1080           | 10 Mbps          | 1920x1080        | 10.0 Mbps      | 10.0 Mbps      | No              |
 | 1280x720            | 3 Mbps           | 1280x720         | 3.0 Mbps       | 3.0 Mbps       | No              |
 
 ### File Naming
@@ -1210,7 +1210,7 @@ class MediaConvertService
             $outputResolution['height'] / $metadata['height']
         );
         $scaledBitrate = (int) ($metadata['bitrate'] * $scaleFactor);
-        $maxBitrate = 5000000; // 5 Mbps in bps
+        $maxBitrate = 10000000; // 10 Mbps in bps
         $outputBitrate = min($scaledBitrate, $maxBitrate);
 
         // Dynamic watermark sizing based on video dimensions
