@@ -81,15 +81,15 @@ function secondsToTimecode(totalSeconds, frames = 0) {
  * @param {number} options.videoDurationMs - Video duration in milliseconds
  * @param {number} options.watermarkSize - Watermark size in pixels (square, width and height)
  * @param {number} options.offset - Offset from edges in pixels
- * @param {number} options.durationMs - Duration for each watermark in milliseconds
+ * @param {number} options.durationMs - Duration for each watermark in milliseconds (default: 5000)
  * @param {number} options.opacity - Opacity (0-100, where 100 is fully opaque)
  * @param {string} options.watermarkUri - S3 URI of the watermark image (e.g., 's3://bucket/assets/logo.png')
  * @returns {Array} Array of watermark objects ready for MediaConvert InsertableImages
  * 
  * Example for 30-second video:
- * - Sequence duration: 2s per corner × 2 corners = 4s
- * - Number of sequences: ceil(30000ms / 4000ms) = 8 sequences
- * - Total watermarks: 8 sequences × 2 corners = 16 watermarks
+ * - Sequence duration: 5s per corner × 2 corners = 10s
+ * - Number of sequences: ceil(30000ms / 10000ms) = 3 sequences
+ * - Total watermarks: 3 sequences × 2 corners = 6 watermarks
  */
 function generateWatermarkSequence({
   videoWidth = 1920,
@@ -97,7 +97,7 @@ function generateWatermarkSequence({
   videoDurationMs = 15000,
   watermarkSize = 100,
   offset = 50,
-  durationMs = 2000,
+  durationMs = 5000,
   opacity = 80,
   watermarkUri = `s3://${config.s3.bucket}/assets/watermark.png`,
 }) {
@@ -148,6 +148,55 @@ function generateWatermarkSequence({
   }
   
   return watermarks;
+}
+
+/**
+ * Generate static watermarks for videos (no animation)
+ * 
+ * This function creates two static watermarks that persist throughout the entire video:
+ * - Top-left corner
+ * - Bottom-right corner
+ * 
+ * Used for videos with yuvj420p color space to avoid ImageInserter preprocessor failures
+ * when using animated watermarks.
+ * 
+ * @param {Object} options - Watermark configuration options
+ * @param {number} options.videoWidth - Video width in pixels
+ * @param {number} options.videoHeight - Video height in pixels
+ * @param {number} options.watermarkSize - Watermark size in pixels (square, width and height)
+ * @param {number} options.offset - Offset from edges in pixels
+ * @param {number} options.opacity - Opacity (0-100, where 100 is fully opaque)
+ * @param {string} options.watermarkUri - S3 URI of the watermark image
+ * @returns {Array} Array of 2 watermark objects (top-left, bottom-right)
+ */
+function generateStaticWatermarks({
+  videoWidth = 1920,
+  videoHeight = 1080,
+  watermarkSize = 100,
+  offset = 50,
+  opacity = 80,
+  watermarkUri = `s3://${config.s3.bucket}/assets/watermark.png`,
+}) {
+  return [
+    {
+      ImageInserterInput: watermarkUri,
+      Layer: 0,
+      Opacity: opacity,
+      Width: watermarkSize,
+      Height: watermarkSize,
+      ImageX: offset,
+      ImageY: offset,
+    },
+    {
+      ImageInserterInput: watermarkUri,
+      Layer: 1,
+      Opacity: opacity,
+      Width: watermarkSize,
+      Height: watermarkSize,
+      ImageX: videoWidth - watermarkSize - offset,
+      ImageY: videoHeight - watermarkSize - offset,
+    }
+  ];
 }
 
 /**
@@ -297,9 +346,9 @@ function calculateOutputResolution(width, height, maxLongEdge = 1920) {
 
 
 /**
- * Get video metadata (duration, dimensions, and bitrate) using ffprobe
+ * Get video metadata (duration, dimensions, bitrate, and color space) using ffprobe
  * @param {string} videoPath - Path to the video file
- * @returns {Promise<Object>} Video metadata with durationMs, width, height, bitrate
+ * @returns {Promise<Object>} Video metadata with durationMs, width, height, bitrate, colorSpace
  */
 async function getVideoMetadata(videoPath) {
   return new Promise((resolve, reject) => {
@@ -354,16 +403,30 @@ async function getVideoMetadata(videoPath) {
       // Get bitrate from video stream or format, preferring video stream bitrate
       const bitrate = videoStream.bit_rate || metadata.format.bit_rate || 0;
       
+      // Detect color space (pixel format) using direct ffprobe call
+      let colorSpace = 'unknown';
+      try {
+        const colorSpaceOutput = execSync(
+          `ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`,
+          { encoding: 'utf8' }
+        );
+        colorSpace = colorSpaceOutput.trim();
+      } catch (error) {
+        console.log(`⚠️  Could not detect color space: ${error.message}`);
+      }
+      
       console.log(`Video metadata detected:`);
       console.log(`  Duration: ${(durationMs / 1000).toFixed(2)}s`);
       console.log(`  Dimensions: ${width}x${height}`);
       console.log(`  Bitrate: ${(bitrate / 1000000).toFixed(2)} Mbps`);
+      console.log(`  Color space: ${colorSpace}`);
       
       resolve({
         durationMs: Math.floor(durationMs),
         width,
         height,
         bitrate,
+        colorSpace,
       });
     });
   });
@@ -371,6 +434,12 @@ async function getVideoMetadata(videoPath) {
 
 /**
  * Create a MediaConvert job to convert video to MP4
+ * 
+ * VideoSelector configuration:
+ * - ColorSpace: REC_709 (standard HD color space)
+ * - Rotate: AUTO (handles mobile video rotation automatically)
+ * - ColorSpaceUsage: FORCE (ensures consistent color space across all inputs)
+ * 
  * @param {string} inputUri - S3 URI of the input video
  * @param {string} localFilePath - Local path to the video file (optional)
  * @returns {Promise<string>} Job ID
@@ -416,24 +485,44 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, 10, 80);
     const watermarkOffset = calculateWatermarkOffset(outputResolution.width, outputResolution.height);
 
+    // Detect problem color spaces and choose appropriate watermark strategy
+    // These color spaces don't work with animated watermarks: yuv420p10le, yuv420p, yuvj420p
+    const problematicColorSpaces = ['yuv420p10le', 'yuv420p', 'yuvj420p'];
+    const needsStaticWatermark = problematicColorSpaces.includes(videoMetadata.colorSpace);
+    
     console.log(`\n💧 Watermark Configuration:`);
+    console.log(`  Strategy: ${needsStaticWatermark ? 'Static (color space compatibility)' : 'Animated looping'}`);
     console.log(`  Output Resolution: ${outputResolution.width}x${outputResolution.height}`);
     console.log(`  Watermark Size: ${watermarkSize}x${watermarkSize}px`);
+    console.log(`  Positions: Top-left + Bottom-right`);
     console.log(`  Offset: ${watermarkOffset}px from edges`);
-    console.log(`  Opacity: 80%`);
-    console.log(`  Animation: Looping sequence (top-left & bottom-right, 2s per corner)\n`);
+    console.log(`  Opacity: 80%\n`);
 
-    // Generate watermark sequence using OUTPUT resolution (after rotation)
-    const watermarkSequence = generateWatermarkSequence({
-      videoWidth: outputResolution.width,
-      videoHeight: outputResolution.height,
-      videoDurationMs: videoMetadata.durationMs,
-      watermarkSize,
-      offset: watermarkOffset,
-      durationMs: 2000,
-      opacity: 80,
-      watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
-    });
+    // Generate watermark sequence based on color space
+    let watermarkSequence;
+    if (needsStaticWatermark) {
+      console.log(`⚠️  ${videoMetadata.colorSpace} color space detected - using static watermarks for compatibility`);
+      watermarkSequence = generateStaticWatermarks({
+        videoWidth: outputResolution.width,
+        videoHeight: outputResolution.height,
+        watermarkSize,
+        offset: watermarkOffset,
+        opacity: 80,
+        watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
+      });
+    } else {
+      console.log(`✓ Compatible color space detected - using animated watermarks`);
+      watermarkSequence = generateWatermarkSequence({
+        videoWidth: outputResolution.width,
+        videoHeight: outputResolution.height,
+        videoDurationMs: videoMetadata.durationMs,
+        watermarkSize,
+        offset: watermarkOffset,
+        durationMs: 5000,
+        opacity: 80,
+        watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
+      });
+    }
     
 
     const jobSettings = {
@@ -445,7 +534,9 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
           {
             FileInput: inputUri,
             VideoSelector: {
+              ColorSpace: 'REC_709',
               Rotate: 'AUTO',
+              ColorSpaceUsage: 'FORCE'
             },
             AudioSelectors: {
               'Audio Selector 1': {
