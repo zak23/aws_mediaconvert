@@ -1,8 +1,9 @@
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { config } from './config.js';
 import fs from 'fs';
 import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
 
 const s3Client = new S3Client({
   region: config.aws.region,
@@ -11,6 +12,31 @@ const s3Client = new S3Client({
     secretAccessKey: config.aws.secretAccessKey,
   },
 });
+
+/**
+ * Get video bitrate using ffprobe
+ * @param {string} videoPath - Path to the video file
+ * @returns {Promise<number>} Video bitrate in bps
+ */
+async function getVideoBitrate(videoPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(videoPath, (err, metadata) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+      if (!videoStream) {
+        reject(new Error('No video stream found'));
+        return;
+      }
+      
+      const bitrate = videoStream.bit_rate || metadata.format.bit_rate || 0;
+      resolve(bitrate);
+    });
+  });
+}
 
 /**
  * Upload a video file to S3
@@ -26,7 +52,15 @@ export async function uploadToS3(filePath) {
     const fileName = path.basename(filePath);
     const s3Key = `${config.s3.inputFolder}/${fileName}`;
 
-    console.log(`Uploading ${fileName} to S3...`);
+    // Log video bitrate before uploading
+    try {
+      const bitrate = await getVideoBitrate(filePath);
+      console.log(`📊 Original video bitrate: ${(bitrate / 1000000).toFixed(2)} Mbps`);
+      console.log(`Uploading ${fileName} to S3...`);
+    } catch (error) {
+      console.log(`Uploading ${fileName} to S3...`);
+      console.warn(`Could not read video bitrate: ${error.message}`);
+    }
 
     const upload = new Upload({
       client: s3Client,
@@ -74,6 +108,41 @@ function getContentType(filePath) {
 }
 
 /**
+ * Wait for file to appear in S3 (MediaConvert sometimes completes job before file is fully written)
+ * @param {string} bucket - S3 bucket name
+ * @param {string} key - S3 object key
+ * @param {number} maxAttempts - Maximum number of attempts
+ * @param {number} delayMs - Delay between attempts in milliseconds
+ * @returns {Promise<boolean>} True if file exists, false otherwise
+ */
+async function waitForS3Object(bucket, key, maxAttempts = 12, delayMs = 5000) {
+  console.log(`⏳ Waiting for file to appear in S3...`);
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const headCommand = new HeadObjectCommand({ Bucket: bucket, Key: key });
+      await s3Client.send(headCommand);
+      console.log(`✅ File found in S3 (attempt ${attempt})`);
+      return true;
+    } catch (error) {
+      if (error.name === 'NotFound' || error.name === 'NoSuchKey') {
+        if (attempt < maxAttempts) {
+          console.log(`   Attempt ${attempt}/${maxAttempts}: File not ready yet, waiting ${delayMs/1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        } else {
+          console.error(`   File still not found after ${maxAttempts} attempts`);
+          return false;
+        }
+      } else {
+        throw error;
+      }
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Download a file from S3 to local outputs directory
  * @param {string} s3Uri - S3 URI of the file to download
  * @param {string} localOutputPath - Local path where the file should be saved
@@ -93,6 +162,12 @@ export async function downloadFromS3(s3Uri, localOutputPath) {
     const key = match[2];
     
     console.log(`\n📥 Downloading ${path.basename(key)} from S3...`);
+    
+    // Wait for file to appear in S3 (MediaConvert completion doesn't guarantee file is ready)
+    const fileExists = await waitForS3Object(bucket, key, 12, 5000);
+    if (!fileExists) {
+      throw new Error('File not found in S3 after waiting for MediaConvert to complete');
+    }
     
     // Ensure output directory exists
     const outputDir = path.dirname(localOutputPath);

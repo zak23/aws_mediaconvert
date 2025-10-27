@@ -179,9 +179,9 @@ function calculateOutputResolution(width, height, maxLongEdge = 1920) {
 }
 
 /**
- * Get video metadata (duration and dimensions) using ffprobe
+ * Get video metadata (duration, dimensions, and bitrate) using ffprobe
  * @param {string} videoPath - Path to the video file
- * @returns {Promise<Object>} Video metadata with durationMs, width, height
+ * @returns {Promise<Object>} Video metadata with durationMs, width, height, bitrate
  */
 async function getVideoMetadata(videoPath) {
   return new Promise((resolve, reject) => {
@@ -201,14 +201,19 @@ async function getVideoMetadata(videoPath) {
       const width = videoStream.width;
       const height = videoStream.height;
       
+      // Get bitrate from video stream or format, preferring video stream bitrate
+      const bitrate = videoStream.bit_rate || metadata.format.bit_rate || 0;
+      
       console.log(`Video metadata detected:`);
       console.log(`  Duration: ${(durationMs / 1000).toFixed(2)}s`);
       console.log(`  Dimensions: ${width}x${height}`);
+      console.log(`  Bitrate: ${(bitrate / 1000000).toFixed(2)} Mbps`);
       
       resolve({
         durationMs: Math.floor(durationMs),
         width,
         height,
+        bitrate,
       });
     });
   });
@@ -231,7 +236,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     console.log(`Output: ${outputUri}`);
 
     // Get video metadata if local file is provided
-    let videoMetadata = { durationMs: 15000, width: 1920, height: 1080 };
+    let videoMetadata = { durationMs: 15000, width: 1920, height: 1080, bitrate: 5000000 };
     if (localFilePath) {
       try {
         videoMetadata = await getVideoMetadata(localFilePath);
@@ -242,6 +247,14 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
 
     // Calculate output resolution (scale down if long edge > 1920)
     const outputResolution = calculateOutputResolution(videoMetadata.width, videoMetadata.height, 1920);
+
+    // Calculate output bitrate based on original bitrate and resolution scaling
+    const scaleFactor = Math.min(outputResolution.width / videoMetadata.width, outputResolution.height / videoMetadata.height);
+    const outputBitrate = Math.floor(videoMetadata.bitrate * scaleFactor);
+    
+    console.log(`\n📊 Bitrate Settings:`);
+    console.log(`  Original: ${(videoMetadata.bitrate / 1000000).toFixed(2)} Mbps`);
+    console.log(`  Output: ${(outputBitrate / 1000000).toFixed(2)} Mbps (scale factor: ${scaleFactor.toFixed(3)})`);
 
     // Calculate optimal watermark size and offset based on output resolution
     const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, 10, 80);
@@ -286,7 +299,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
                   CodecSettings: {
                     Codec: 'H_264',
                     H264Settings: {
-                      MaxBitrate: 5000000,
+                      MaxBitrate: outputBitrate,
                       RateControlMode: 'QVBR',
                       QualityTuningLevel: 'SINGLE_PASS_HQ',
                       SceneChangeDetect: 'TRANSITION_DETECTION',
@@ -400,39 +413,49 @@ export async function monitorJobProgress(jobId) {
             console.log(`[${timestamp}] ✅ Job completed successfully! (${elapsedSeconds}s total)`);
             
             // Extract output file URI from completed job
+            let outputUri = null;
             try {
-              if (job.Settings && job.Settings.OutputGroups && job.Settings.OutputGroups.length > 0) {
+              if (job.Settings && job.Settings.OutputGroups && job.Settings.OutputGroups.length > 0 && 
+                  job.Settings.Inputs && job.Settings.Inputs.length > 0) {
                 const outputGroup = job.Settings.OutputGroups[0];
                 const destination = outputGroup.OutputGroupSettings?.FileGroupSettings?.Destination;
                 
-                if (destination && job.Inputs && job.Inputs.length > 0) {
-                  const fileName = path.basename(job.Inputs[0].FileInput);
-                  const baseName = path.basename(fileName, path.extname(fileName));
-                  const extension = path.extname(fileName);
-                  
-                  // Try to get nameModifier from output settings
-                  let nameModifier = '';
-                  if (outputGroup.Outputs && outputGroup.Outputs.length > 0 && outputGroup.Outputs[0].NameModifier) {
-                    nameModifier = outputGroup.Outputs[0].NameModifier;
-                  } else if (outputGroup.Outputs && outputGroup.Outputs[0].NameModifier === undefined) {
-                    nameModifier = '_' + Date.now();
-                  }
-                  
-                  // Remove trailing slash from destination
-                  const cleanDestination = destination.endsWith('/') ? destination.slice(0, -1) : destination;
-                  const outputUri = `${cleanDestination}/${baseName}${nameModifier}${extension}`;
-                  
-                  console.log(`     Output file: ${outputUri}`);
-                } else {
-                  console.log(`     Output location: s3://${config.s3.bucket}/${config.s3.outputFolder}/`);
+                const fileName = path.basename(job.Settings.Inputs[0].FileInput);
+                const baseName = path.basename(fileName, path.extname(fileName));
+                
+                // Try to get nameModifier from output settings
+                let nameModifier = '';
+                if (outputGroup.Outputs && outputGroup.Outputs.length > 0 && outputGroup.Outputs[0].NameModifier) {
+                  nameModifier = outputGroup.Outputs[0].NameModifier;
+                } else if (outputGroup.Outputs && outputGroup.Outputs[0].NameModifier === undefined) {
+                  nameModifier = '_' + Date.now();
                 }
+                
+                // Determine output extension from container settings
+                let extension = '.mp4'; // Default to MP4
+                if (outputGroup.Outputs && outputGroup.Outputs.length > 0) {
+                  const container = outputGroup.Outputs[0].ContainerSettings?.Container;
+                  if (container === 'MP4') {
+                    extension = '.mp4';
+                  } else if (container === 'MOV') {
+                    extension = '.mov';
+                  }
+                }
+                
+                // Remove trailing slash from destination
+                const cleanDestination = destination.endsWith('/') ? destination.slice(0, -1) : destination;
+                outputUri = `${cleanDestination}/${baseName}${nameModifier}${extension}`;
+                
+                console.log(`     Output file: ${outputUri}`);
+              } else {
+                console.log(`     Output location: s3://${config.s3.bucket}/${config.s3.outputFolder}/`);
               }
             } catch (error) {
               // Silently handle output URI extraction errors - job is still complete
               console.log(`     Output location: s3://${config.s3.bucket}/${config.s3.outputFolder}/`);
             }
             
-            return job;
+            return { job, outputUri };
           case JobStatus.CANCELED:
             console.log(`[${timestamp}] ❌ Job was canceled`);
             throw new Error('MediaConvert job was canceled');
@@ -491,7 +514,43 @@ export async function monitorJobProgress(jobId) {
       
       // Break loop on repeated errors to avoid infinite loop
       if (previousStatus === JobStatus.COMPLETE) {
-        break;
+        // Get the final job status to return outputUri
+        const finalJob = await getJobStatus(jobId);
+        let outputUri = null;
+        
+        try {
+          if (finalJob.Settings && finalJob.Settings.OutputGroups && finalJob.Settings.OutputGroups.length > 0 && 
+              finalJob.Settings.Inputs && finalJob.Settings.Inputs.length > 0) {
+            const outputGroup = finalJob.Settings.OutputGroups[0];
+            const destination = outputGroup.OutputGroupSettings?.FileGroupSettings?.Destination;
+            
+            const fileName = path.basename(finalJob.Settings.Inputs[0].FileInput);
+            const baseName = path.basename(fileName, path.extname(fileName));
+            
+            let nameModifier = '';
+            if (outputGroup.Outputs && outputGroup.Outputs.length > 0 && outputGroup.Outputs[0].NameModifier) {
+              nameModifier = outputGroup.Outputs[0].NameModifier;
+            }
+            
+            // Determine output extension from container settings
+            let extension = '.mp4'; // Default to MP4
+            if (outputGroup.Outputs && outputGroup.Outputs.length > 0) {
+              const container = outputGroup.Outputs[0].ContainerSettings?.Container;
+              if (container === 'MP4') {
+                extension = '.mp4';
+              } else if (container === 'MOV') {
+                extension = '.mov';
+              }
+            }
+            
+            const cleanDestination = destination.endsWith('/') ? destination.slice(0, -1) : destination;
+            outputUri = `${cleanDestination}/${baseName}${nameModifier}${extension}`;
+          }
+        } catch (e) {
+          // Silently handle
+        }
+        
+        return { job: finalJob, outputUri };
       }
       
       await new Promise(resolve => setTimeout(resolve, pollIntervalMs));

@@ -186,11 +186,18 @@ When processing is complete, the script automatically downloads the processed vi
 - **Automatic directory creation**: Creates `outputs/` directory if it doesn't exist
 - **Timestamped filenames**: Prevents overwriting previous outputs
 - **Smart naming**: Preserves original filename with MediaConvert modifiers
+- **Retry mechanism**: Waits for file to appear in S3 (MediaConvert sometimes completes before file is fully written)
 
 **Example:**
 ```
 input/video.mp4 → outputs/video_1734567890.mp4
 ```
+
+**Note**: The script waits up to 60 seconds for the processed file to appear in S3 before attempting to download (with 5-second intervals). This ensures reliable downloads even though MediaConvert job completion doesn't always guarantee the S3 file is immediately available.
+
+**Important**: The output file extension is automatically determined from the MediaConvert container settings (defaults to `.mp4`). For example:
+- Input: `video.mov` → Output: `video_TIMESTAMP.mp4`
+- Input: `video.mkv` → Output: `video_TIMESTAMP.mp4`
 
 ## Real-Time Progress Monitoring
 
@@ -221,6 +228,9 @@ MediaConvert job created: abc123-def456-ghi789
 S3 Output Location: s3://your-bucket/output/my-video_1734567890.mp4
 
 📥 Downloading my-video_1734567890.mp4 from S3...
+⏳ Waiting for file to appear in S3...
+   Attempt 1/12: File not ready yet, waiting 5s...
+✅ File found in S3 (attempt 2)
 Download progress: 100%
 
 ✅ Download complete: outputs/my-video_1734567890.mp4
