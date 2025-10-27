@@ -35,6 +35,7 @@ This is a **video processing CLI application** that uploads videos to AWS S3 and
 
 - **Automatic Resolution Scaling**: Scales down videos exceeding 1920px long edge
 - **Even Dimension Enforcement**: Ensures all dimensions are even numbers (MediaConvert requirement)
+- **Automatic Rotation Handling**: Detects portrait video rotation metadata and handles orientation correctly
 - **Dynamic Watermarking**: Looping watermark animation sequence
 - **Smart Bitrate Calculation**: Adjusts bitrate based on resolution scaling
 - **Timestamped Output**: Prevents filename collisions
@@ -271,6 +272,10 @@ export async function monitorJobProgress(jobId: string): Promise<{ job, outputUr
   - `width`: Video width in pixels
   - `height`: Video height in pixels
   - `bitrate`: Video bitrate in bps
+- **Rotation Detection**: Detects rotation metadata and swaps width/height for portrait videos
+  - Checks `stream_side_data_list` for rotation value
+  - If rotation is 90° or -90° (or 270°/-270°), swaps dimensions
+  - Logs rotation detection and dimension swap
 - Returns: `{ durationMs, width, height, bitrate }`
 
 #### `calculateOutputResolution(width, height, maxLongEdge): Object`
@@ -383,7 +388,11 @@ return Math.floor(finalSize)
   Queue?: queueArn,
   StatusUpdateInterval: 'SECONDS_10',
   Settings: {
-    Inputs: [{ FileInput, VideoSelector, AudioSelectors }],
+    Inputs: [{ 
+      FileInput, 
+      VideoSelector: { Rotate: 'AUTO' },  // Auto-rotate based on metadata
+      AudioSelectors 
+    }],
     OutputGroups: [{
       Name: 'File Group',
       OutputGroupSettings: { Type, FileGroupSettings: { Destination } },
@@ -1109,7 +1118,7 @@ class MediaConvertService
             'Settings' => [
                 'Inputs' => [[
                     'FileInput' => $inputUri,
-                    'VideoSelector' => [],
+                    'VideoSelector' => ['Rotate' => 'AUTO'],  // Auto-rotate based on metadata
                     'AudioSelectors' => [
                         'Audio Selector 1' => [
                             'DefaultSelection' => 'DEFAULT',

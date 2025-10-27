@@ -314,8 +314,40 @@ async function getVideoMetadata(videoPath) {
       }
       
       const durationMs = metadata.format.duration * 1000;
-      const width = videoStream.width;
-      const height = videoStream.height;
+      let width = videoStream.width;
+      let height = videoStream.height;
+      
+      // Check for rotation metadata using direct ffprobe call
+      let rotation = 0;
+      try {
+        const rotationOutput = execSync(
+          `ffprobe -v error -select_streams v:0 -show_entries stream_side_data=rotation -of json "${videoPath}"`,
+          { encoding: 'utf8' }
+        );
+        const rotationData = JSON.parse(rotationOutput);
+        if (rotationData.streams && rotationData.streams.length > 0) {
+          const stream = rotationData.streams[0];
+          if (stream.side_data_list && stream.side_data_list.length > 0) {
+            for (const sideData of stream.side_data_list) {
+              if (sideData.rotation !== undefined) {
+                rotation = sideData.rotation;
+                console.log(`📱 Rotation detected: ${rotation}°`);
+                break;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        // Rotation detection failed, continue without it
+        console.log(`⚠️  Could not detect rotation: ${error.message}`);
+      }
+      
+      // If rotation is 90 or -90 degrees (or 270 degrees), swap width and height
+      // This accounts for portrait videos that need to be rotated
+      if (rotation === 90 || rotation === -90 || rotation === 270 || rotation === -270) {
+        console.log(`   ↻ Swapping dimensions: ${width}x${height} → ${height}x${width}`);
+        [width, height] = [height, width];
+      }
       
       // Get bitrate from video stream or format, preferring video stream bitrate
       const bitrate = videoStream.bit_rate || metadata.format.bit_rate || 0;
@@ -391,7 +423,9 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
         Inputs: [
           {
             FileInput: inputUri,
-            VideoSelector: {},
+            VideoSelector: {
+              Rotate: 'AUTO',
+            },
             AudioSelectors: {
               'Audio Selector 1': {
                 DefaultSelection: 'DEFAULT',

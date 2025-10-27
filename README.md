@@ -11,6 +11,7 @@ A simple Node.js script to upload videos to S3 and convert them to MP4 using AWS
 - **Real-time transcoding progress** - See job status updates in terminal
 - **Dynamic watermark insertion** - Looping sequential watermark animation
 - **Automatic video metadata detection** - Detects video dimensions and duration
+- **Automatic rotation handling** - Correctly handles portrait videos with rotation metadata
 - **Smart resolution scaling** - Automatically scales down videos where long edge > 1920px while preserving aspect ratio
 - **Automatic download** - Downloads processed videos from S3 to local `outputs/` directory
 - **File size tracking** - Logs initial and completed file sizes with compression ratio
@@ -203,6 +204,19 @@ The script automatically detects your video dimensions and scales them down if n
 - `1280x720` → `1280x720` (unchanged)
 - `1921x1081` → `1920x1080` (even dimension adjustment)
 - `1079x1920` → `1078x1920` (even dimension adjustment)
+
+### Automatic Rotation Handling
+
+The script automatically detects and handles portrait videos with rotation metadata:
+
+- **Detection**: Checks rotation metadata in video files (e.g., -90°, 90°, 270°)
+- **Dimension Swap**: Swaps width and height for portrait videos (640x360 → 360x640)
+- **MediaConvert Rotation**: Applies `Rotate: 'AUTO'` to MediaConvert job settings for automatic rotation
+- **Smart Handling**: Ensures videos display correctly without being sideways
+
+**Example:**
+- Portrait video with -90° rotation: Detected and converted to proper orientation
+- Landscape video: No rotation applied, processed normally
 
 ## Watermark Feature
 
