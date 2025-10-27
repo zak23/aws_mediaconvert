@@ -1,0 +1,26 @@
+{
+  "name": "aws-mediaconvert",
+  "version": "1.0.0",
+  "description": "Upload videos to S3 and convert them with AWS MediaConvert",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "aws",
+    "s3",
+    "mediaconvert",
+    "video",
+    "processing"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-mediaconvert": "^3.676.0",
+    "@aws-sdk/client-s3": "^3.676.0",
+    "@aws-sdk/lib-storage": "^3.676.0",
+    "dotenv": "^16.4.7",
+    "fluent-ffmpeg": "^2.1.3"
+  }
+}
