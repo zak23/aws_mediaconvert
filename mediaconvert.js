@@ -137,7 +137,6 @@ function generateWatermarkSequence({
           Opacity: opacity,
           Width: watermarkSize,
           Height: watermarkSize,
-          Duration: watermarkDuration,
           StartTime: secondsToTimecode(watermarkStartMs / 1000),
           ImageX: corner.x,
           ImageY: corner.y,
@@ -399,7 +398,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     // Calculate output bitrate with 5 Mbps maximum
     const scaleFactor = Math.min(outputResolution.width / videoMetadata.width, outputResolution.height / videoMetadata.height);
     const scaledBitrate = Math.floor(videoMetadata.bitrate * scaleFactor);
-    const maxBitrate = 10000000; // 5 Mbps in bps
+    const maxBitrate = 10000000; // 10 Mbps in bps
     const outputBitrate = Math.min(scaledBitrate, maxBitrate);
     
     console.log(`\n📊 Bitrate Settings:`);
