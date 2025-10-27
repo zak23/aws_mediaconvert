@@ -2,6 +2,8 @@
 
 A simple Node.js script to upload videos to S3 and convert them to MP4 using AWS MediaConvert.
 
+> 📚 **For Laravel Conversion**: See [ARCHITECTURE.md](ARCHITECTURE.md) for comprehensive architecture documentation and Laravel conversion guide.
+
 ## Features
 
 - Upload videos to S3 with progress tracking
@@ -298,17 +300,35 @@ The script includes comprehensive error handling:
 
 ```
 .
-├── config.js           # Configuration loader
-├── upload.js           # S3 upload/download module
-├── mediaconvert.js     # MediaConvert job module
-├── index.js            # Main script
-├── package.json        # Node.js dependencies
-├── .env               # Environment variables (not in git)
-├── .env.example       # Example environment file
-├── inputs/            # Local input videos
-├── outputs/           # Downloaded processed videos
-└── README.md          # This file
+├── config.js                # Configuration loader
+├── upload.js                 # S3 upload/download module
+├── mediaconvert.js           # MediaConvert job module
+├── index.js                  # Main script
+├── package.json              # Node.js dependencies
+├── .env                      # Environment variables (not in git)
+├── .env.example              # Example environment file
+├── inputs/                   # Local input videos
+├── outputs/                      # Downloaded processed videos
+├── README.md                     # This file
+├── ARCHITECTURE.md               # Complete architecture documentation
+├── LARAVEL_CONVERSION_GUIDE.md   # Quick Laravel conversion guide
+└── DOCUMENTATION_SUMMARY.md      # Documentation overview
 ```
+
+## Documentation
+
+- **[README.md](README.md)** - This file: Usage guide and quick start
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete architecture documentation:
+  - System overview and data flow
+  - Module breakdown with code examples
+  - AWS services integration
+  - Technical specifications
+  - Laravel conversion guide with PHP code
+  - API specification
+  - Database schema
+  - Testing strategy
+- **[LARAVEL_CONVERSION_GUIDE.md](LARAVEL_CONVERSION_GUIDE.md)** - Quick-start checklist for Laravel conversion
+- **[DOCUMENTATION_SUMMARY.md](DOCUMENTATION_SUMMARY.md)** - Overview of all documentation
 
 ## License
 
