@@ -126,6 +126,7 @@ function generateWatermarkSequence({
       // Only add if it starts before the video ends
       if (watermarkStartMs < videoDurationMs) {
         // Calculate remaining duration if this is the last sequence
+        // Duration MUST be integer milliseconds (not timecode string)
         let watermarkDuration = durationMs;
         if (watermarkStartMs + durationMs > videoDurationMs) {
           watermarkDuration = videoDurationMs - watermarkStartMs;
@@ -137,6 +138,7 @@ function generateWatermarkSequence({
           Opacity: opacity,
           Width: watermarkSize,
           Height: watermarkSize,
+          Duration: Math.floor(watermarkDuration), // Integer milliseconds - CRITICAL for watermark to show
           StartTime: secondsToTimecode(watermarkStartMs / 1000),
           ImageX: corner.x,
           ImageY: corner.y,
@@ -293,6 +295,7 @@ function calculateOutputResolution(width, height, maxLongEdge = 1920) {
   };
 }
 
+
 /**
  * Get video metadata (duration, dimensions, and bitrate) using ffprobe
  * @param {string} videoPath - Path to the video file
@@ -393,6 +396,8 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     }
 
     // Calculate output resolution (scale down if long edge > 1920)
+    // MediaConvert applies rotation FIRST, then inserts watermarks on the rotated output
+    // So we use the post-rotation dimensions for both output and watermark calculations
     const outputResolution = calculateOutputResolution(videoMetadata.width, videoMetadata.height, 1920);
 
     // Calculate output bitrate with 5 Mbps maximum
@@ -404,18 +409,32 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     console.log(`\n📊 Bitrate Settings:`);
     console.log(`  Original: ${(videoMetadata.bitrate / 1000000).toFixed(2)} Mbps`);
     console.log(`  Scaled: ${(scaledBitrate / 1000000).toFixed(2)} Mbps (scale factor: ${scaleFactor.toFixed(3)})`);
-    console.log(`  Output: ${(outputBitrate / 1000000).toFixed(2)} Mbps (max: 5 Mbps)`);
+    console.log(`  Output: ${(outputBitrate / 1000000).toFixed(2)} Mbps (max: 10 Mbps)`);
 
-    // Calculate optimal watermark size and offset based on output resolution
+    // Calculate optimal watermark size and offset based on OUTPUT resolution
+    // MediaConvert applies rotation FIRST, then inserts watermarks on rotated video
     const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, 10, 80);
     const watermarkOffset = calculateWatermarkOffset(outputResolution.width, outputResolution.height);
 
     console.log(`\n💧 Watermark Configuration:`);
-    console.log(`  Size: ${watermarkSize}x${watermarkSize}px`);
+    console.log(`  Output Resolution: ${outputResolution.width}x${outputResolution.height}`);
+    console.log(`  Watermark Size: ${watermarkSize}x${watermarkSize}px`);
     console.log(`  Offset: ${watermarkOffset}px from edges`);
     console.log(`  Opacity: 80%`);
-    console.log(`  Animation: Looping sequence (top-left & bottom-right, 2s per corner)`);
-    console.log(`\n📐 Output Resolution: ${outputResolution.width}x${outputResolution.height}\n`);
+    console.log(`  Animation: Looping sequence (top-left & bottom-right, 2s per corner)\n`);
+
+    // Generate watermark sequence using OUTPUT resolution (after rotation)
+    const watermarkSequence = generateWatermarkSequence({
+      videoWidth: outputResolution.width,
+      videoHeight: outputResolution.height,
+      videoDurationMs: videoMetadata.durationMs,
+      watermarkSize,
+      offset: watermarkOffset,
+      durationMs: 2000,
+      opacity: 80,
+      watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
+    });
+    
 
     const jobSettings = {
       Role: config.mediaconvert.roleArn,
@@ -460,16 +479,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
                   },
                   VideoPreprocessors: {
                     ImageInserter: {
-                      InsertableImages: generateWatermarkSequence({
-                        videoWidth: outputResolution.width,
-                        videoHeight: outputResolution.height,
-                        videoDurationMs: videoMetadata.durationMs,
-                        watermarkSize,
-                        offset: watermarkOffset,
-                        durationMs: 2000,
-                        opacity: 80,
-                        watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
-                      }),
+                      InsertableImages: watermarkSequence,
                     },
                   },
                 },

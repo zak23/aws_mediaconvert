@@ -642,7 +642,7 @@ s3://your-bucket/
 
 **Image Requirements**:
 - Format: PNG with transparency
-- Recommended size: 512x512px or larger
+- Recommended size: 512x512px or larger (smaller images will be scaled)
 - Upload location: `s3://bucket/assets/watermark.png`
 
 **Animation Behavior**:
@@ -667,6 +667,81 @@ const offset = Math.max(
   (smallerDimension * percentOffset) / 100,  // 3-5% of dimension
   20                                          // Minimum 20px
 );
+```
+
+### Rotation and Watermark Positioning
+
+**IMPORTANT**: MediaConvert applies rotation **FIRST**, then inserts watermarks on the rotated output!
+
+When processing rotated videos (portrait videos shot in landscape):
+1. Input video: 3840x2160 (landscape) with rotation metadata (-90°)
+2. MediaConvert **rotates** to 2160x3840 (portrait) using `VideoSelector: { Rotate: 'AUTO' }`
+3. MediaConvert **scales** to 1080x1920 (if exceeds 1920px long edge)
+4. MediaConvert **inserts watermarks** on final 1080x1920 (portrait) output
+
+**Solution**: Calculate watermark positions based on **post-rotation dimensions** (final output resolution).
+
+```javascript
+// Get video metadata (includes rotation detection and dimension swap)
+const videoMetadata = await getVideoMetadata(localFilePath);
+// For rotated video: returns { width: 2160, height: 3840 } (portrait)
+
+// Calculate output resolution (post-rotation)
+const outputResolution = calculateOutputResolution(
+  videoMetadata.width,   // 2160 (portrait width)
+  videoMetadata.height,  // 3840 (portrait height)
+  1920
+); // Returns { width: 1080, height: 1920 } (portrait)
+
+// Calculate watermark positions for OUTPUT dimensions
+const watermarkSize = calculateWatermarkSize(
+  outputResolution.width,   // 1080
+  outputResolution.height   // 1920
+);
+```
+
+**Why This Matters**: If you calculate watermark positions for pre-rotation dimensions (3840x2160 landscape), the X/Y coordinates will be outside the visible frame of the final 1080x1920 portrait video, causing watermarks to disappear.
+
+### MediaConvert InsertableImages Configuration
+
+**CRITICAL**: Each watermark object MUST include these fields:
+
+```javascript
+{
+  ImageInserterInput: "s3://bucket/assets/watermark.png",  // S3 URI
+  Layer: 0,                                                 // Integer (unique per watermark)
+  Opacity: 80,                                             // Integer 0-100
+  Width: 108,                                              // Integer pixels
+  Height: 108,                                             // Integer pixels
+  Duration: 2000,        // ⚠️ CRITICAL: Integer milliseconds (NOT timecode)
+  StartTime: "00:00:00:00",  // Timecode format HH:MM:SS:FF
+  ImageX: 32,                // Integer pixels from left
+  ImageY: 32                 // Integer pixels from top
+}
+```
+
+**Duration Field Requirements**:
+- MUST be integer (e.g., `2000` not `"00:00:02:00"`)
+- MUST be in milliseconds
+- Without Duration, watermark displays from StartTime to end of video
+- Multiple overlapping watermarks without Duration will cause issues
+- Last watermark's duration may be adjusted to fit video length
+
+**Common Pitfalls**:
+1. ❌ Using timecode string for Duration: `Duration: "00:00:02:00"` → API Error
+2. ❌ Omitting Duration field → All watermarks overlap
+3. ❌ Using float values: `Duration: 2000.5` → May cause issues
+4. ✅ Correct: `Duration: Math.floor(2000)`
+
+**Example Sequence for 10-second video**:
+```javascript
+[
+  { StartTime: "00:00:00:00", Duration: 2000, ImageX: 32,   ImageY: 32 },    // Top-left 0-2s
+  { StartTime: "00:00:02:00", Duration: 2000, ImageX: 1780, ImageY: 940 },  // Bottom-right 2-4s
+  { StartTime: "00:00:04:00", Duration: 2000, ImageX: 32,   ImageY: 32 },    // Top-left 4-6s
+  { StartTime: "00:00:06:00", Duration: 2000, ImageX: 1780, ImageY: 940 },  // Bottom-right 6-8s
+  { StartTime: "00:00:08:00", Duration: 2000, ImageX: 32,   ImageY: 32 }     // Top-left 8-10s
+]
 ```
 
 ### Resolution Scaling Logic

@@ -260,6 +260,112 @@ calculateWatermarkOffset(videoWidth, videoHeight)
 
 Place your watermark image at `s3://your-bucket/assets/watermark.png`
 
+**Requirements:**
+- Format: PNG with transparency
+- Recommended size: 512x512px or larger
+- Location: Must be in the `assets/` folder in your S3 bucket
+
+**Upload Command:**
+```bash
+aws s3 cp watermark.png s3://your-bucket/assets/watermark.png
+```
+
+### Watermark Troubleshooting
+
+#### Watermark Not Appearing
+
+**Problem**: Watermark doesn't show in output video
+
+**Solutions**:
+
+1. **Check S3 Upload**
+   ```bash
+   aws s3 ls s3://your-bucket/assets/
+   # Should show: watermark.png
+   ```
+
+2. **Verify IAM Permissions**
+   - MediaConvert role must have `s3:GetObject` permission for the watermark
+   - Add to your MediaConvert IAM role policy:
+   ```json
+   {
+     "Effect": "Allow",
+     "Action": "s3:GetObject",
+     "Resource": "arn:aws:s3:::your-bucket/assets/*"
+   }
+   ```
+
+3. **Check Console Output**
+   - Look for watermark configuration in console:
+   ```
+   🔍 Watermark Sequence Generated:
+     Total: 6 watermarks
+     [0] Start=00:00:00:00, Duration=2000ms, Pos=(32,32), Size=108x108
+   ```
+   - If Duration is missing or shows as timecode string, update your code
+
+4. **Image Quality**
+   - Use high-resolution watermark (512x512px minimum)
+   - Ensure PNG has transparent background
+   - Check opacity setting (default: 80%)
+
+5. **Verify Video Duration**
+   - Watermarks need at least 2 seconds to show
+   - Very short videos (<2s) may not display watermarks
+
+#### Watermarks Overlap or Don't Alternate
+
+**Problem**: All watermarks appear in same position or overlap
+
+**Cause**: Missing or incorrect `Duration` field
+
+**Solution**: Ensure `Duration` is integer milliseconds:
+```javascript
+// ✅ Correct
+Duration: 2000  // Integer milliseconds
+
+// ❌ Wrong
+Duration: "00:00:02:00"  // Timecode string
+// ❌ Wrong  
+// Duration field missing
+```
+
+#### Watermark Too Small or Large
+
+**Problem**: Watermark size doesn't match video
+
+**Cause**: Automatic sizing based on video dimensions
+
+**Solution**: Adjust percentage in `calculateWatermarkSize()`:
+```javascript
+// Current: 10% of smaller dimension, min 80px
+calculateWatermarkSize(videoWidth, videoHeight, 10, 80)
+
+// Larger watermark: 15% of smaller dimension, min 100px
+calculateWatermarkSize(videoWidth, videoHeight, 15, 100)
+```
+
+#### Watermark Cut Off or Off-Screen
+
+**Problem**: Watermark partially visible or missing
+
+**Cause**: Incorrect position calculation for rotated videos
+
+**Solution**: System now correctly calculates watermarks based on **POST-ROTATION** dimensions
+- MediaConvert applies rotation FIRST, then inserts watermarks on rotated output
+- Watermarks are positioned on final output resolution (after rotation and scaling)
+- Check console output for "Watermark Configuration" section
+
+**Example**:
+```
+💧 Watermark Configuration:
+  Output Resolution: 1080x1920
+  Watermark Size: 108x108px
+  Offset: 32px from edges
+  Opacity: 80%
+  Animation: Looping sequence (top-left & bottom-right, 2s per corner)
+```
+
 ## S3 Structure
 
 ```
