@@ -270,6 +270,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
     const jobSettings = {
       Role: config.mediaconvert.roleArn,
       ...(config.mediaconvert.queueArn && { Queue: config.mediaconvert.queueArn }),
+      StatusUpdateInterval: 'SECONDS_5',
       Settings: {
         Inputs: [
           {
