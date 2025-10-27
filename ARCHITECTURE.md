@@ -316,7 +316,12 @@ finalSize = max(calculatedSize, minSize)
 return Math.floor(finalSize)
 ```
 
-**Default**: 10% of smaller dimension, minimum 80px
+**Dynamic Sizing**: 
+- For larger files (long edge > 1920px): 15% of smaller dimension
+- For normal files (long edge ≤ 1920px): 10% of smaller dimension
+- Minimum: 80px always enforced
+
+**Default**: 10% or 15% of smaller dimension (based on video size), minimum 80px
 
 #### `calculateWatermarkOffset(width, height): number`
 - Calculates offset from edges
@@ -390,7 +395,11 @@ return Math.floor(finalSize)
   Settings: {
     Inputs: [{ 
       FileInput, 
-      VideoSelector: { Rotate: 'AUTO' },  // Auto-rotate based on metadata
+      VideoSelector: { 
+        ColorSpace: 'REC_709',  // Standard HD color space
+        Rotate: 'AUTO',          // Auto-rotate based on metadata
+        ColorSpaceUsage: 'FALLBACK' or 'FORCE'  // FALLBACK for yuv420p, FORCE for others
+      }, 
       AudioSelectors 
     }],
     OutputGroups: [{
@@ -645,18 +654,33 @@ s3://your-bucket/
 - Recommended size: 512x512px or larger (smaller images will be scaled)
 - Upload location: `s3://bucket/assets/watermark.png`
 
-**Animation Behavior**:
-- Duration per corner: 2 seconds
-- Corners: Top-left and bottom-right (alternating)
-- Opacity: 80%
-- Loops throughout entire video
+**Watermark Strategy**:
+- **Animated Loop**: Used for most video formats
+  - Looping sequence alternating between corners
+  - Duration per corner: 2 seconds
+  - Full video coverage with dynamic timing
+  - Opacity: Configurable (default: 50%)
+- **Static Watermarks**: Used for yuv420p color space variants
+  - Two persistent watermarks (top-left + bottom-right)
+  - Avoids ImageInserter preprocessor failures
+  - Applied to: yuv420p, yuvj420p, yuv420p10le
+  - Opacity: Configurable (default: 50%)
+
+**Color Space Compatibility**:
+- yuv420p variants use static watermarks and flexible color space handling (FALLBACK mode)
+- These formats have color range differences (full vs limited range) that can cause preprocessor failures
+- FALLBACK mode allows graceful fallback if color space is incompatible
 
 **Size Calculation**:
 ```javascript
+// Dynamic sizing based on video size
+const longEdge = Math.max(videoMetadata.width, videoMetadata.height);
+const watermarkPercent = longEdge > 1920 ? 15 : 10; // 15% for large files, 10% for normal
+
 const smallerDimension = Math.min(width, height);
 const watermarkSize = Math.max(
-  (smallerDimension * 0.10),  // 10% of smaller dimension
-  80                           // Minimum 80px
+  (smallerDimension * watermarkPercent / 100),  // Dynamic percentage
+  80                                             // Minimum 80px
 );
 ```
 
@@ -668,6 +692,23 @@ const offset = Math.max(
   20                                          // Minimum 20px
 );
 ```
+
+### Color Space Handling
+
+**Why yuv420p variants fail**:
+- yuv420p has variations (full-range vs limited-range color values)
+- yuvj420p = full-range yuv420p (0-255 color values)
+- yuv420p = limited-range yuv420p (16-235 color values)
+- MediaConvert's ImageInserter preprocessor can fail on color space conversion mismatches
+
+**Solution**: Use FALLBACK mode for yuv420p variants
+- `ColorSpaceUsage: 'FALLBACK'` - Attempts REC_709 but falls back gracefully if incompatible
+- `ColorSpaceUsage: 'FORCE'` - Forces REC_709 conversion, may fail on incompatible color ranges
+- FALLBACK mode allows successful processing with optimal fallback behavior
+
+**Detection**: FFprobe detects pixel format (pix_fmt)
+- Color space detected during metadata extraction
+- Different handling applied based on detected format
 
 ### Rotation and Watermark Positioning
 
@@ -1172,9 +1213,14 @@ class MediaConvertService
         $maxBitrate = 5000000; // 5 Mbps in bps
         $outputBitrate = min($scaledBitrate, $maxBitrate);
 
+        // Dynamic watermark sizing based on video dimensions
+        $longEdge = max($metadata['width'], $metadata['height']);
+        $watermarkPercent = $longEdge > 1920 ? 15 : 10; // 15% for large files, 10% for normal
+        
         $watermarkSize = $this->watermark->calculateSize(
             $outputResolution['width'],
-            $outputResolution['height']
+            $outputResolution['height'],
+            $watermarkPercent  // Pass dynamic percentage
         );
         $watermarkOffset = $this->watermark->calculateOffset(
             $outputResolution['width'],

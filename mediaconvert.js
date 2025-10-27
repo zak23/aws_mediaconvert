@@ -98,7 +98,7 @@ function generateWatermarkSequence({
   watermarkSize = 100,
   offset = 50,
   durationMs = 5000,
-  opacity = 80,
+  opacity = config.mediaconvert.watermarkOpacity,
   watermarkUri = `s3://${config.s3.bucket}/assets/watermark.png`,
 }) {
   // Define corner positions where watermarks will appear
@@ -174,7 +174,7 @@ function generateStaticWatermarks({
   videoHeight = 1080,
   watermarkSize = 100,
   offset = 50,
-  opacity = 80,
+  opacity = config.mediaconvert.watermarkOpacity,
   watermarkUri = `s3://${config.s3.bucket}/assets/watermark.png`,
 }) {
   return [
@@ -215,13 +215,13 @@ function generateStaticWatermarks({
  * 
  * @param {number} videoWidth - Video width in pixels
  * @param {number} videoHeight - Video height in pixels
- * @param {number} percentSize - Percentage of smaller dimension (default: 10%)
+ * @param {number} percentSize - Percentage of smaller dimension (default: 10%, 15% for large files)
  * @param {number} minSize - Minimum watermark size in pixels (default: 80)
  * @returns {number} Calculated watermark size (rounded down to integer)
  * 
  * Examples:
  * - 1920×1080 → uses 1080px → 10% = 108px → returns 108px
- * - 3840×2160 → uses 2160px → 10% = 216px → returns 216px
+ * - 3840×2160 → uses 2160px → 15% = 324px → returns 324px (large file, bigger watermark)
  * - 720×480 → uses 480px → 10% = 48px → min 80px → returns 80px
  */
 function calculateWatermarkSize(videoWidth, videoHeight, percentSize = 10, minSize = 80) {
@@ -438,7 +438,15 @@ async function getVideoMetadata(videoPath) {
  * VideoSelector configuration:
  * - ColorSpace: REC_709 (standard HD color space)
  * - Rotate: AUTO (handles mobile video rotation automatically)
- * - ColorSpaceUsage: FORCE (ensures consistent color space across all inputs)
+ * - ColorSpaceUsage: 
+ *   - FALLBACK for yuv420p variants (allows fallback if color range incompatible)
+ *   - FORCE for other formats (ensures consistent color space)
+ * 
+ * Color Space Handling:
+ * - yuv420p variants (yuv420p, yuvj420p, yuv420p10le) use FALLBACK mode
+ *   to handle color range differences (full-range vs limited-range)
+ * - Other formats use FORCE mode for consistent color space
+ * - yuv420p variants also use static watermarks to avoid ImageInserter failures
  * 
  * @param {string} inputUri - S3 URI of the input video
  * @param {string} localFilePath - Local path to the video file (optional)
@@ -482,21 +490,31 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
 
     // Calculate optimal watermark size and offset based on OUTPUT resolution
     // MediaConvert applies rotation FIRST, then inserts watermarks on rotated video
-    const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, 10, 80);
+    
+    // For larger video files (long edge > 1920px), use bigger watermark (15% vs 10%)
+    const longEdge = Math.max(videoMetadata.width, videoMetadata.height);
+    const watermarkPercent = longEdge > 1920 ? 15 : 10;
+    const watermarkSize = calculateWatermarkSize(outputResolution.width, outputResolution.height, watermarkPercent, 80);
     const watermarkOffset = calculateWatermarkOffset(outputResolution.width, outputResolution.height);
 
     // Detect problem color spaces and choose appropriate watermark strategy
-    // These color spaces don't work with animated watermarks: yuv420p10le, yuv420p, yuvj420p
-    const problematicColorSpaces = ['yuv420p10le', 'yuv420p', 'yuvj420p'];
+    // yuvj420p = full range yuv420p (full-range/0-255), known to cause MediaConvert issues
+    // yuv420p10le = 10-bit yuv420p, requires special handling
+    // yuv420p = standard limited-range yuv420p (16-235), generally works but some variants may fail
+    const problematicColorSpaces = ['yuv420p10le', 'yuvj420p', 'yuv420p'];
     const needsStaticWatermark = problematicColorSpaces.includes(videoMetadata.colorSpace);
+    
+    // For yuv420p variants, use more flexible color space handling to avoid preprocessor failures
+    const needsFlexibleColorSpace = ['yuv420p', 'yuvj420p', 'yuv420p10le'].includes(videoMetadata.colorSpace);
     
     console.log(`\n💧 Watermark Configuration:`);
     console.log(`  Strategy: ${needsStaticWatermark ? 'Static (color space compatibility)' : 'Animated looping'}`);
+    console.log(`  Color Space Handling: ${needsFlexibleColorSpace ? 'Flexible (yuv420p compatibility)' : 'Standard'}`);
     console.log(`  Output Resolution: ${outputResolution.width}x${outputResolution.height}`);
-    console.log(`  Watermark Size: ${watermarkSize}x${watermarkSize}px`);
+    console.log(`  Watermark Size: ${watermarkSize}x${watermarkSize}px (${watermarkPercent}% of smaller dimension)`);
     console.log(`  Positions: Top-left + Bottom-right`);
     console.log(`  Offset: ${watermarkOffset}px from edges`);
-    console.log(`  Opacity: 80%\n`);
+    console.log(`  Opacity: ${config.mediaconvert.watermarkOpacity}%\n`);
 
     // Generate watermark sequence based on color space
     let watermarkSequence;
@@ -507,7 +525,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
         videoHeight: outputResolution.height,
         watermarkSize,
         offset: watermarkOffset,
-        opacity: 80,
+        opacity: config.mediaconvert.watermarkOpacity,
         watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
       });
     } else {
@@ -519,7 +537,7 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
         watermarkSize,
         offset: watermarkOffset,
         durationMs: 5000,
-        opacity: 80,
+        opacity: config.mediaconvert.watermarkOpacity,
         watermarkUri: `s3://${config.s3.bucket}/assets/watermark.png`,
       });
     }
@@ -536,7 +554,10 @@ export async function createMediaConvertJob(inputUri, localFilePath = null) {
             VideoSelector: {
               ColorSpace: 'REC_709',
               Rotate: 'AUTO',
-              ColorSpaceUsage: 'FORCE'
+              // Use FALLBACK for yuv420p variants to avoid preprocessor failures
+              // FALLBACK attempts REC_709 but falls back gracefully if incompatible
+              // FORCE might fail on certain yuv420p variants due to color range differences
+              ColorSpaceUsage: needsFlexibleColorSpace ? 'FALLBACK' : 'FORCE'
             },
             AudioSelectors: {
               'Audio Selector 1': {
